@@ -17,12 +17,13 @@ package cmd
 import (
 	"context"
 	"errors"
-	"github.com/go-logr/logr"
-	"github.com/go-logr/zerologr"
 	"os"
 	"os/exec"
 	"os/signal"
 	"time"
+
+	"github.com/go-logr/logr"
+	"github.com/go-logr/zerologr"
 
 	"github.com/fatih/color"
 	"github.com/rs/zerolog"
@@ -119,6 +120,7 @@ func Execute() {
 	rootCmd.AddCommand(NewInfluxDBCommand())
 	rootCmd.AddCommand(NewMongoDBCommand())
 	rootCmd.AddCommand(NewRabbitMQCommand())
+	rootCmd.AddCommand(NewKafkaCommand())
 	rootCmd.AddCommand(NewVersionCommand())
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)

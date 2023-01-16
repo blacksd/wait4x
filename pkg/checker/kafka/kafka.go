@@ -16,16 +16,14 @@ package kafka
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/atkrad/wait4x/v2/pkg/checker"
-	"github.com/streadway/amqp"
 )
 
 // Option configures a Kafka.
@@ -43,7 +41,7 @@ const (
 	// DefaultLocale is the default connection locale
 	DefaultNoVerify = false
 	// DefaultTLS defines wether use SSL or PLAINTEXT
-	DefaultTLS = false
+	DefaultUseTLS = false
 	// DefaultCACert is the default path for the certificate to verify TLS
 	DefaultCACert = "./ca.crt"
 	// TODO: describe
@@ -57,101 +55,102 @@ var DefaultConsumerGroup string = fmt.Sprintf("wait4x-%s", strings.Split(uuid.Ne
 
 // Kafka represents a Kafka checker
 type Kafka struct {
-	dsn      string
-	timeout  time.Duration
-	NoVerify bool
+	bootstrapServers string
+	topic            string
+	timeout          time.Duration
+	noVerify         bool
+	useTLS           bool
+	caCert           string
+	basicAuth        string
+	messageContent   *regexp.Regexp
+	consumerGroup    string
 }
 
 // New creates the Kafka checker
-func New(dsn string, opts ...Option) checker.Checker {
-	t := &Kafka{
-		dsn:      dsn,
-		timeout:  DefaultConnectionTimeout,
-		NoVerify: DefaultNoVerify,
+func New(bootstrapServers string,
+	topic string, timeout time.Duration,
+	noVerify bool,
+	useTLS bool,
+	caCert string,
+	basicAuth string,
+	messageContent *regexp.Regexp,
+	consumerGroup string) checker.Checker {
+	c := &Kafka{
+		bootstrapServers: bootstrapServers,
+		topic:            topic,
+		timeout:          timeout,
+		noVerify:         noVerify,
+		useTLS:           useTLS,
+		caCert:           caCert,
+		basicAuth:        basicAuth,
+		messageContent:   messageContent,
+		consumerGroup:    consumerGroup,
 	}
 
-	// apply the list of options to Kafka
-	for _, opt := range opts {
-		opt(t)
-	}
-
-	return t
-}
-
-// WithTimeout configures a timeout for maximum amount of time a dial will wait for a connection to complete
-func WithTimeout(timeout time.Duration) Option {
-	return func(r *Kafka) {
-		r.timeout = timeout
-	}
-}
-
-// WithNoVerify controls whether a client verifies the server's certificate chain and hostname
-func WithNoVerify(NoVerify bool) Option {
-	return func(r *Kafka) {
-		r.NoVerify = NoVerify
-	}
+	return c
 }
 
 // Identity returns the identity of the checker
 func (r Kafka) Identity() (string, error) {
-	u, err := amqp.ParseURI(r.dsn)
-	if err != nil {
-		return "", fmt.Errorf("can't retrieve the checker identity: %w", err)
-	}
+	/* 	u, err := amqp.ParseURI(r.dsn)
+	   	if err != nil {
+	   		return "", fmt.Errorf("can't retrieve the checker identity: %w", err)
+	   	}
 
-	return fmt.Sprintf("%s:%d", u.Host, u.Port), nil
+	   	return fmt.Sprintf("%s:%d", u.Host, u.Port), nil */
+	return "eh", nil
 }
 
 // Check checks Kafka connection
 func (r *Kafka) Check(ctx context.Context) (err error) {
-	conn, err := amqp.DialConfig(
-		r.dsn,
-		amqp.Config{
-			Heartbeat: DefaultHeartbeat,
-			Locale:    DefaultLocale,
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: r.NoVerify,
-			},
-			Dial: func(network, addr string) (net.Conn, error) {
-				d := net.Dialer{Timeout: r.timeout}
-				conn, err := d.DialContext(ctx, network, addr)
-				if err != nil {
-					return nil, err
-				}
+	/* 	conn, err := amqp.DialConfig(
+	   		r.dsn,
+	   		amqp.Config{
+	   			Heartbeat: DefaultHeartbeat,
+	   			Locale:    DefaultLocale,
+	   			TLSClientConfig: &tls.Config{
+	   				InsecureSkipVerify: r.NoVerify,
+	   			},
+	   			Dial: func(network, addr string) (net.Conn, error) {
+	   				d := net.Dialer{Timeout: r.timeout}
+	   				conn, err := d.DialContext(ctx, network, addr)
+	   				if err != nil {
+	   					return nil, err
+	   				}
 
-				// Heartbeating hasn't started yet, don't stall forever on a dead server.
-				// A deadline is set for TLS and AMQP handshaking. After AMQP is established,
-				// the deadline is cleared in openComplete.
-				if err := conn.SetDeadline(time.Now().Add(r.timeout)); err != nil {
-					return nil, err
-				}
+	   				// Heartbeating hasn't started yet, don't stall forever on a dead server.
+	   				// A deadline is set for TLS and AMQP handshaking. After AMQP is established,
+	   				// the deadline is cleared in openComplete.
+	   				if err := conn.SetDeadline(time.Now().Add(r.timeout)); err != nil {
+	   					return nil, err
+	   				}
 
-				return conn, nil
-			},
-		},
-	)
+	   				return conn, nil
+	   			},
+	   		},
+	   	)
 
-	if err != nil {
-		if checker.IsConnectionRefused(err) {
-			return checker.NewExpectedError(
-				"failed to establish a connection to the Kafka server", err,
-				"dsn", r.dsn,
-			)
-		}
+	   	if err != nil {
+	   		if checker.IsConnectionRefused(err) {
+	   			return checker.NewExpectedError(
+	   				"failed to establish a connection to the Kafka server", err,
+	   				"dsn", r.dsn,
+	   			)
+	   		}
 
-		return err
-	}
+	   		return err
+	   	}
 
-	defer func(conn *amqp.Connection) {
-		if connerr := conn.Close(); connerr != nil {
-			err = connerr
-		}
-	}(conn)
+	   	defer func(conn *amqp.Connection) {
+	   		if connerr := conn.Close(); connerr != nil {
+	   			err = connerr
+	   		}
+	   	}(conn)
 
-	_, err = conn.Channel()
-	if err != nil {
-		return err
-	}
-
+	   	_, err = conn.Channel()
+	   	if err != nil {
+	   		return err
+	   	}
+	*/
 	return nil
 }

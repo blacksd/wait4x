@@ -16,8 +16,8 @@ package cmd
 
 import (
 	"errors"
+	"regexp"
 
-	"github.com/atkrad/wait4x/v2/pkg/checker"
 	"github.com/atkrad/wait4x/v2/pkg/checker/kafka"
 	"github.com/atkrad/wait4x/v2/pkg/waiter"
 	"github.com/spf13/cobra"
@@ -49,7 +49,7 @@ func NewKafkaCommand() *cobra.Command {
 	kafkaCommand.Flags().Duration("connection-timeout", kafka.DefaultConnectionTimeout, "Timeout is the maximum amount of time a dial will wait for a connection to complete.")
 
 	// TODO: WARN --no-verify without --tls makes sense but it's odd
-	kafkaCommand.Flags().Bool("tls", kafka.DefaultTLS, "TLS defines wether use SSL or PLAINTEXT.")
+	kafkaCommand.Flags().Bool("tls", kafka.DefaultUseTLS, "TLS defines wether use SSL or PLAINTEXT.")
 	kafkaCommand.Flags().Bool("no-verify", kafka.DefaultNoVerify, "NoVerify controls whether a client verifies the server's certificate chain and hostname.")
 	// TODO: KO --cacert with --no-verify, pick on
 	// TODO: KO --cacert with inaccessible path
@@ -71,41 +71,41 @@ func checkKafkaArgs(cmd *cobra.Command, args []string) error {
 	if len(args) != 2 {
 		return errors.New("Please specify both bootstrap server(s) and a topic to connect to.")
 	}
+	// TODO: check if it's an IP and port
 	return nil
 }
 
 func runKafkaE(cmd *cobra.Command, args []string) error {
-	interval, _ := cmd.Flags().GetDuration("interval")
-	timeout, _ := cmd.Flags().GetDuration("timeout")
+	// TODO: not sure what to do with this
 	invertCheck, _ := cmd.Flags().GetBool("invert-check")
+	connectionTimeout, _ := cmd.Flags().GetDuration("connection-timeout")
+	useTLS, _ := cmd.Flags().GetBool("tls")
+	noVerify, _ := cmd.Flags().GetBool("no-verify")
+	caCert, _ := cmd.Flags().GetString("ca-cert")
+	basicAuth, _ := cmd.Flags().GetString("basic-auth")
+	messageContent, _ := cmd.Flags().GetString("message-content")
+	consumerGroup, _ := cmd.Flags().GetString("consumer-group")
 
-	conTimeout, _ := cmd.Flags().GetDuration("connection-timeout")
-	NoVerify, _ := cmd.Flags().GetBool("no-verify")
-
-	// ArgsLenAtDash returns -1 when -- was not specified
-	if i := cmd.ArgsLenAtDash(); i != -1 {
-		args = args[:i]
-	} else {
-		args = args[:]
+	messageContentRE, err := regexp.Compile(messageContent)
+	if err != nil {
+		return errors.New("The regex format is invalid.")
 	}
 
-	checkers := make([]checker.Checker, 0)
-	for _, arg := range args {
-		rc := kafka.New(
-			arg,
-			kafka.WithTimeout(conTimeout),
-			kafka.WithNoVerify(NoVerify),
-		)
-
-		checkers = append(checkers, rc)
-	}
-
-	return waiter.WaitParallelContext(
-		cmd.Context(),
-		checkers,
-		waiter.WithTimeout(timeout),
-		waiter.WithInterval(interval),
-		waiter.WithInvertCheck(invertCheck),
-		waiter.WithLogger(Logger),
+	kafkaChecker := kafka.New(
+		args[0],
+		args[1],
+		connectionTimeout,
+		useTLS,
+		noVerify,
+		caCert,
+		basicAuth,
+		messageContentRE,
+		consumerGroup,
 	)
+
+	return waiter.WaitContext(
+		cmd.Context(),
+		kafkaChecker,
+		waiter.WithInvertCheck(invertCheck),
+		waiter.WithLogger(Logger))
 }

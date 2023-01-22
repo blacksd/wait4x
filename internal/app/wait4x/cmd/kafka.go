@@ -15,8 +15,11 @@
 package cmd
 
 import (
+	"crypto/x509"
 	"errors"
+	"os"
 	"regexp"
+	"strings"
 
 	"github.com/atkrad/wait4x/v2/pkg/checker/kafka"
 	"github.com/atkrad/wait4x/v2/pkg/waiter"
@@ -37,10 +40,10 @@ func NewKafkaCommand() *cobra.Command {
   # Use TLS (use --no-verify to skip CA check) and basic auth 
   wait4x kafka '127.0.0.1:9092' 'my_topic' --tls --ca-cert ./ca.crt --basic-auth 'username:password'
 
-  # Wait for a message that satisfies a specific regex (use --from-beginning to start from the first offset)
+  # Wait for a message that satisfies a specific regex
   wait4x kafka '127.0.0.1:9092' 'my_topic' --message-content '^.*Kubelet.*$' 
 
-  # Join a specific Consumer Group, instead of creating a new one
+  # Join a specific Consumer Group, instead of creating a new one (use --from-beginning to restart from the first offset)
   wait4x kafka '127.0.0.1:9092' 'my_topic' --consumer-group 'my-cool-app-consumers' 
 `,
 		RunE: runKafkaE,
@@ -53,7 +56,7 @@ func NewKafkaCommand() *cobra.Command {
 	kafkaCommand.Flags().Bool("no-verify", kafka.DefaultNoVerify, "NoVerify controls whether a client verifies the server's certificate chain and hostname.")
 	// TODO: KO --cacert with --no-verify, pick on
 	// TODO: KO --cacert with inaccessible path
-	kafkaCommand.Flags().String("ca-cert", kafka.DefaultCACert, "CACert is the path to the root CA for validation.")
+	kafkaCommand.Flags().String("ca-cert", "", "CACert is the path to the root CA for validation.")
 
 	// TODO: KO invalid --basic-auth
 	kafkaCommand.Flags().String("basic-auth", kafka.DefaultBasicAuth, "BasicAuth defines a RFC2617-compliant Basic Authentication credential set.")
@@ -63,13 +66,14 @@ func NewKafkaCommand() *cobra.Command {
 
 	// TODO: KO invalid --consumer-group
 	kafkaCommand.Flags().String("consumer-group", kafka.DefaultConsumerGroup, "ConsumerGroup defines a custom Consumer Group to create or join.")
+	kafkaCommand.Flags().Bool("from-beginning", kafka.DefaultFromBeginning, "ConsumerGroup defines a custom Consumer Group to create or join.")
 
 	return kafkaCommand
 }
 
 func checkKafkaArgs(cmd *cobra.Command, args []string) error {
 	if len(args) != 2 {
-		return errors.New("Please specify both bootstrap server(s) and a topic to connect to.")
+		return errors.New("please specify both bootstrap server(s) and a topic to connect to")
 	}
 	// TODO: check if it's an IP and port
 	return nil
@@ -78,6 +82,7 @@ func checkKafkaArgs(cmd *cobra.Command, args []string) error {
 func runKafkaE(cmd *cobra.Command, args []string) error {
 	// TODO: not sure what to do with this
 	invertCheck, _ := cmd.Flags().GetBool("invert-check")
+
 	connectionTimeout, _ := cmd.Flags().GetDuration("connection-timeout")
 	useTLS, _ := cmd.Flags().GetBool("tls")
 	noVerify, _ := cmd.Flags().GetBool("no-verify")
@@ -85,10 +90,26 @@ func runKafkaE(cmd *cobra.Command, args []string) error {
 	basicAuth, _ := cmd.Flags().GetString("basic-auth")
 	messageContent, _ := cmd.Flags().GetString("message-content")
 	consumerGroup, _ := cmd.Flags().GetString("consumer-group")
+	fromBeginning, _ := cmd.Flags().GetBool("from-beginning")
 
-	messageContentRE, err := regexp.Compile(messageContent)
+	messageContentRegExp, err := regexp.Compile(messageContent)
 	if err != nil {
-		return errors.New("The regex format is invalid.")
+		return errors.New("the regex format is invalid")
+	}
+
+	// Build a *x509.CertPool from the path or nil
+	caCertBundle := x509.NewCertPool()
+	if caCert != "" {
+		f, err := os.ReadFile(caCert)
+		if err != nil {
+			return errors.New("error reading CA cert file")
+		}
+		caCertBundle.AppendCertsFromPEM(f)
+	}
+
+	splitAuth := strings.SplitN(basicAuth, ":", 2)
+	if len(splitAuth) != 2 {
+		return errors.New("cannot build auth string")
 	}
 
 	kafkaChecker := kafka.New(
@@ -97,10 +118,11 @@ func runKafkaE(cmd *cobra.Command, args []string) error {
 		connectionTimeout,
 		useTLS,
 		noVerify,
-		caCert,
+		caCertBundle,
 		basicAuth,
-		messageContentRE,
+		messageContentRegExp,
 		consumerGroup,
+		fromBeginning,
 	)
 
 	return waiter.WaitContext(

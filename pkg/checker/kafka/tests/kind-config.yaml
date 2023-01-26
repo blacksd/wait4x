@@ -1,0 +1,26 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  podSubnet: "10.244.0.0/16"
+  serviceSubnet: "10.96.0.0/12"
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.25.3@sha256:f1de3b0670462f43280114eccceab8bf1b9576d2afe0582f8f74529da6fd0365
+    extraPortMappings:
+      # - containerPort: 9092
+      #   hostPort: 9092
+      # - containerPort: 9093
+      #   hostPort: 9093
+      # - containerPort: 9094
+      #   hostPort: 9094
+      - containerPort: 30001
+        hostPort: 30001
+      - containerPort: 30100
+        hostPort: 30100
+      - containerPort: 30002
+        hostPort: 30002
+      - containerPort: 30200
+        hostPort: 30200
+
+    labels:
+      kafka-preferred: true

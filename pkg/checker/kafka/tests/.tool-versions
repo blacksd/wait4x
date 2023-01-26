@@ -1,0 +1,5 @@
+kubectl 1.25.5
+kind 0.17.0
+task 3.19.1
+yq 4.30.6
+kafkactl 3.0.1

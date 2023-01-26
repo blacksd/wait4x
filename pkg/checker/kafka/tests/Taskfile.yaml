@@ -1,0 +1,121 @@
+# https://taskfile.dev
+
+version: "3"
+
+vars:
+  KIND_CONFIG_FILE: kind-config.yaml
+  KIND_CLUSTER_NAME: kafka-demo-cluster
+  KAFKA_NAMESPACE: kafka
+  KAFKA_CLUSTER_NAME:
+    sh: yq -r '.metadata.name' kafka-ephemeral.yaml
+  KAFKA_TOPIC_NAME:
+    sh: yq -r '.metadata.name' kafka-topic.yaml
+
+tasks:
+  default:
+    cmds:
+      - task -l
+    silent: true
+
+  cluster-rebuild:
+    desc: Kill and recreate the KIND cluster
+    cmds:
+      - task: cluster-delete
+      - task: cluster-build
+
+  cluster-build:
+    desc: Create the KIND cluster
+    cmds:
+      - kind create cluster --config {{ .KIND_CONFIG_FILE }} --name {{ .KIND_CLUSTER_NAME }}
+    status:
+      - kind get clusters | grep {{ .KIND_CLUSTER_NAME }}
+
+  cluster-delete:
+    desc: Delete the KIND cluster
+    cmds:
+      - kind delete cluster --name {{ .KIND_CLUSTER_NAME }}
+    status:
+      - kind get clusters 2>&1 | grep -v {{ .KIND_CLUSTER_NAME }}
+
+  # ---
+
+  strimzi-install:
+    desc: Install the Strimzi Operator
+    deps:
+      - task: cluster-build
+    cmds:
+      - kubectl create namespace {{ .KAFKA_NAMESPACE }}
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} create --filename 'https://strimzi.io/install/latest?namespace={{ .KAFKA_NAMESPACE }}'
+      - |
+        while [ $(kubectl --namespace kafka get pods --selector strimzi.io/kind=cluster-operator --output name  | wc -l) == "0" ]; do 
+          sleep 3
+        done
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} wait pods --selector strimzi.io/kind=cluster-operator --for=condition=Ready --timeout=120s
+    status:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} wait pods --selector strimzi.io/kind=cluster-operator --for=condition=Ready --timeout=120s
+
+  strimzi-remove:
+    desc: Remove the Strimzi Operator
+    cmds:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} delete --filename 'https://strimzi.io/install/latest?namespace={{ .KAFKA_NAMESPACE }}'
+      - kubectl delete namespace {{ .KAFKA_NAMESPACE }}
+
+  kafka-provision:
+    desc: Provision a new Kafka cluster
+    deps:
+      - task: strimzi-install
+    cmds:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} apply --filename 'kafka-*.yaml'
+      - |
+        while [ $(kubectl --namespace kafka get pods --selector app.kubernetes.io/instance={{ .KAFKA_CLUSTER_NAME }},app.kubernetes.io/name=zookeeper --output name  | wc -l) == "0" ]; do 
+          sleep 3
+        done
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} wait pods --selector app.kubernetes.io/instance={{ .KAFKA_CLUSTER_NAME }},app.kubernetes.io/name=zookeeper --for=condition=Ready --timeout=240s
+      - |
+        while [ $(kubectl --namespace kafka get pods --selector app.kubernetes.io/instance={{ .KAFKA_CLUSTER_NAME }},app.kubernetes.io/name=kafka --output name  | wc -l) == "0" ]; do 
+          sleep 3
+        done
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} wait pods --selector app.kubernetes.io/instance={{ .KAFKA_CLUSTER_NAME }},app.kubernetes.io/name=kafka --for=condition=Ready --timeout=240s
+    status:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} wait pods --selector app.kubernetes.io/instance={{ .KAFKA_CLUSTER_NAME }},app.kubernetes.io/name=kafka --for=condition=Ready --timeout=240s
+
+  kafka-deprovision:
+    desc: Provision a new Kafka cluster
+    deps:
+      - task: strimzi-install
+    cmds:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} delete --filename 'kafka-*.yaml' --ignore-not-found
+
+  # ---
+
+  kafka-producer:
+    desc: Start a console producer
+    deps:
+      - task: kafka-provision
+    cmds:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} run kafka-producer -ti --image=quay.io/strimzi/kafka:0.32.0-kafka-3.3.1 --rm=true --restart=Never -- bin/kafka-console-producer.sh --bootstrap-server {{ .KAFKA_CLUSTER_NAME }}-kafka-bootstrap:9092 --topic {{ .KAFKA_TOPIC_NAME }}
+
+  kafka-consumer:
+    desc: Start a console producer
+    deps:
+      - task: kafka-provision
+    cmds:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} run kafka-consumer -ti --image=quay.io/strimzi/kafka:0.32.0-kafka-3.3.1 --rm=true --restart=Never -- bin/kafka-console-consumer.sh --bootstrap-server {{ .KAFKA_CLUSTER_NAME }}-kafka-bootstrap:9092 --topic {{ .KAFKA_TOPIC_NAME }} --from-beginning
+
+  # ---
+
+  fetch-ca-cert:
+    desc: Fetch the CA certificate
+    silent: true
+    deps:
+      - task: kafka-provision
+    cmds:
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} get secret {{ .KAFKA_CLUSTER_NAME }}-clients-ca-cert -o json | jq -r '.data["ca.crt"] | @base64d' > ./ca.crt
+
+  fetch-user:
+    desc: Fetch the user BasicAuth
+    silent: true
+    deps:
+      - task: kafka-provision
+    cmds:
+      - echo "$(kubectl --namespace {{ .KAFKA_NAMESPACE }} get kafkausers.kafka.strimzi.io kafka-user -o json | jq -r '.status.username'):$(kubectl --namespace {{ .KAFKA_NAMESPACE }} get secret kafka-user -o json | jq -r '.data.password | @base64d')"

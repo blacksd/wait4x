@@ -17,6 +17,8 @@ package cmd
 import (
 	"crypto/x509"
 	"errors"
+	"fmt"
+	"net"
 	"os"
 	"regexp"
 	"strings"
@@ -76,6 +78,11 @@ func checkKafkaArgs(cmd *cobra.Command, args []string) error {
 		return errors.New("please specify both bootstrap server(s) and a topic to connect to")
 	}
 	// TODO: check if it's an IP and port
+	for i, bs := range strings.Split(args[0], ",") {
+		if _, _, err := net.SplitHostPort(bs); err != nil {
+			return fmt.Errorf("failed to validate bootstrap server %v", i+1)
+		}
+	}
 	return nil
 }
 
@@ -111,6 +118,8 @@ func runKafkaE(cmd *cobra.Command, args []string) error {
 	if len(splitAuth) != 2 {
 		return errors.New("cannot build auth string")
 	}
+
+	//bootstrapServers
 
 	kafkaChecker := kafka.New(
 		args[0],

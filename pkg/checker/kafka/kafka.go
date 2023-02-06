@@ -42,7 +42,7 @@ const (
 	// DefaultNoVerify is the default insecure skip tls verify
 
 	// DefaultConnectionTimeout is the default connection timeout duration
-	DefaultConnectionTimeout = 10 * time.Second
+	DefaultConnectionTimeout = 15 * time.Second
 	// DefaultLocale is the default connection locale
 	DefaultNoVerify = false
 	// DefaultTLS defines wether use SSL or PLAINTEXT
@@ -126,7 +126,6 @@ func (r *Kafka) Check(ctx context.Context) (err error) {
 					Password: splitAuth[1],
 				}
 			}
-
 		}(),
 		TLS: func() *tls.Config {
 			if r.useTLS {
@@ -163,9 +162,9 @@ func (r *Kafka) Check(ctx context.Context) (err error) {
 		// TODO: check for context timeout
 		m, err := k.ReadMessage(ctx)
 		if err != nil {
-			if checker.IsConnectionRefused(err) {
+			if err == context.DeadlineExceeded {
 				return checker.NewExpectedError(
-					"failed to connect partition leader", err,
+					"timeout trying to connect to partition leader", err,
 					"bootstrap", r.bootstrapServers,
 				)
 			}

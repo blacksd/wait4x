@@ -110,7 +110,7 @@ tasks:
     deps:
       - task: kafka-provision
     cmds:
-      - kubectl --namespace {{ .KAFKA_NAMESPACE }} get secret {{ .KAFKA_CLUSTER_NAME }}-clients-ca-cert -o json | jq -r '.data["ca.crt"] | @base64d' > ./ca.crt
+      - kubectl --namespace {{ .KAFKA_NAMESPACE }} get secret {{ .KAFKA_CLUSTER_NAME }}-cluster-ca-cert -o json | jq -r '.data["ca.crt"] | @base64d' > ./ca.crt
 
   fetch-user:
     desc: Fetch the user BasicAuth
